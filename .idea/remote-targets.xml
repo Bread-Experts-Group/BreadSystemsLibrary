@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="RemoteTargetsManager">
+    <targets>
+      <target name="breadexpertsgroup@192.168.1.234:22" type="ssh/sftp" uuid="d6f453b9-ca27-4c52-827a-a7652db3f85d">
+        <config>
+          <option name="projectRootOnTarget" value="/home/breadexpertsgroup/BreadSystemsLibrary" />
+          <option name="serverName" value="breadexpertsgroup@192.168.1.234:22 key" />
+        </config>
+        <ContributedStateBase type="JavaLanguageRuntime">
+          <config>
+            <option name="homePath" value="/usr/lib/jvm/jdk-25" />
+            <option name="javaVersionString" value="25" />
+          </config>
+        </ContributedStateBase>
+      </target>
+    </targets>
+  </component>
+</project>

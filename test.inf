@@ -1,0 +1,31 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=USBDevice
+ClassGuid={88BAE032-5A81-49f0-BC3D-A4FF138216D6}
+Provider=%ProviderName%
+DriverVer=09/29/2026,1.0.0.1
+CatalogFile.ntamd64=test.cat
+
+[Manufacturer]
+%ProviderName%=DeviceList,NTamd64
+
+[DeviceList.NTamd64]
+%DeviceName%=WinUSB_Install, USB\VID_0BDA&PID_2838&MI_00
+
+[WinUSB_Install]
+Include=winusb.inf
+Needs=WINUSB.NT
+
+[WinUSB_Install.Services]
+Include=winusb.inf
+Needs=WINUSB.NT.Services
+
+[WinUSB_Install.HW]
+AddReg=WinUSB_Install.HW.AddReg
+
+[WinUSB_Install.HW.AddReg]
+HKR,,DeviceInterfaceGUIDs,0x10000,"{a819feb4-fd91-41de-befe-f34a3603b628}"
+
+[Strings]
+ProviderName="Bread Experts Group"
+DeviceName="RTL2838 WinUSB Interface"
