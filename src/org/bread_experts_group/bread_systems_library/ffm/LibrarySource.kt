@@ -1,23 +1,29 @@
 package org.bread_experts_group.bread_systems_library.ffm
 
+import jdk.dynalink.linker.support.Guards
+import org.bread_experts_group.bread_systems_library.ffm.StateLayout.ERRNO
 import org.bread_experts_group.bread_systems_library.ffm.StateLayout.LAST_ERROR
+import org.bread_experts_group.bread_systems_library.ffm.c.PreserveErrno
 import org.bread_experts_group.bread_systems_library.ffm.c.types.*
 import org.bread_experts_group.bread_systems_library.ffm.util.layout.computeLayout
 import org.bread_experts_group.bread_systems_library.ffm.windows.PreserveLastError
 import org.bread_experts_group.bread_systems_library.generic.ValueProvider
+import java.lang.classfile.ClassFile
+import java.lang.constant.ClassDesc
+import java.lang.constant.ConstantDescs
+import java.lang.constant.MethodTypeDesc
 import java.lang.foreign.*
 import java.lang.invoke.MethodHandle
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.MethodType
+import java.lang.reflect.AccessFlag
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import kotlin.jvm.optionals.getOrNull
-import kotlin.reflect.KClass
-import kotlin.reflect.KFunction
-import kotlin.reflect.KType
-import kotlin.reflect.KTypeProjection
+import kotlin.reflect.*
 import kotlin.reflect.full.companionObjectInstance
 import kotlin.reflect.full.isSuperclassOf
+import kotlin.reflect.jvm.javaGetter
 import kotlin.reflect.jvm.javaMethod
 
 interface LibrarySource {
@@ -27,29 +33,36 @@ interface LibrarySource {
 fun KType.memoryLayout(
     linker: Linker,
     padEnd: Boolean = true,
-    alignment: Long? = null
+    unaligned: Boolean = false
 ): MemoryLayout = when (val clazz = this.classifier!! as KClass<*>) {
-    Pointer::class -> ValueLayout.ADDRESS
-    short::class, `unsigned short`::class -> linker.canonicalLayouts()["short"]!!
-    unsigned_char::class -> linker.canonicalLayouts()["char"]!!
-    int::class, `unsigned int`::class -> linker.canonicalLayouts()["int"]!!
+    Pointer::class, MemorySegment::class -> return if (unaligned) ValueLayout.ADDRESS_UNALIGNED else ValueLayout.ADDRESS
+
+    unsigned__int64::class, Long::class -> return if (unaligned) ValueLayout.JAVA_LONG_UNALIGNED else ValueLayout.JAVA_LONG
     long::class, unsigned_long::class -> linker.canonicalLayouts()["long"]!!
-    unsigned__int64::class, Long::class -> ValueLayout.JAVA_LONG
-    Int::class -> ValueLayout.JAVA_INT
-    Short::class -> ValueLayout.JAVA_SHORT
+
+    Int::class -> return if (unaligned) ValueLayout.JAVA_INT_UNALIGNED else ValueLayout.JAVA_INT
+    int::class, unsigned_int::class -> linker.canonicalLayouts()["int"]!!
+
+    Short::class -> return if (unaligned) ValueLayout.JAVA_SHORT_UNALIGNED else ValueLayout.JAVA_SHORT
+    short::class, unsigned_short::class -> linker.canonicalLayouts()["short"]!!
+
+    char::class, unsigned_char::class -> linker.canonicalLayouts()["char"]!!
+
     Byte::class -> ValueLayout.JAVA_BYTE
     size_t::class, ssize_t::class -> linker.canonicalLayouts()["size_t"]!!
 
     else -> {
         val companion = clazz.companionObjectInstance
-        if (companion is TypeDynamicallySolved) return companion.solve().memoryLayout(linker, padEnd, alignment)
+        if (companion is TypeDynamicallySolved) return companion.solve().memoryLayout(linker, padEnd, unaligned)
 
-        if (Structure::class.isSuperclassOf(clazz)) return this.computeLayout(linker, padEnd, alignment)
+        if (Structure::class.isSuperclassOf(clazz)) return this.computeLayout(linker, padEnd, unaligned)
 
         val superType = clazz.supertypes.first { !(it.classifier!! as KClass<*>).java.isInterface }
         if (superType.classifier == Any::class) throw NotImplementedError("Edge: $this")
-        superType.memoryLayout(linker, padEnd, alignment)
+        superType.memoryLayout(linker, padEnd, unaligned)
     }
+}.let {
+    if (unaligned) it.withByteAlignment(1) else it
 }
 
 fun Method.type(): MethodType = MethodType.methodType(
@@ -57,33 +70,30 @@ fun Method.type(): MethodType = MethodType.methodType(
     this.parameterTypes
 )
 
-fun KFunction<*>.handle(): MethodHandle {
-    val lookup = MethodHandles.lookup()
-    val javaMethod = this.javaMethod!!
-
-    if (javaMethod.modifiers and Modifier.STATIC != 0) TODO("Static function call")
+fun Method.handle(lookup: MethodHandles.Lookup): MethodHandle {
+    if (this.modifiers and Modifier.STATIC != 0) TODO("Static function call")
 
     return lookup.findVirtual(
-        javaMethod.declaringClass,
-        javaMethod.name, javaMethod.type()
-    ).bindTo(javaMethod.declaringClass.kotlin.objectInstance!!)
+        this.declaringClass,
+        this.name, this.type()
+    )
+}
+
+fun KFunction<*>.handle(lookup: MethodHandles.Lookup): MethodHandle = this.javaMethod!!.handle(lookup)
+
+fun KProperty<*>.handle(lookup: MethodHandles.Lookup): MethodHandle {
+    this.javaGetter?.handle(lookup)?.let { return it }
+    TODO("Field")
 }
 
 object NativeMethodFilters {
-    fun fixPointer(pointer: Pointer<*>?): MemorySegment = pointer?.segment ?: MemorySegment.NULL
-    fun fixProviderByte(pointer: ValueProvider): Byte = pointer.value as Byte
-    fun fixProviderShort(pointer: ValueProvider): Short = pointer.value as Short
-    fun fixProviderInt(pointer: ValueProvider): Int = pointer.value as Int
-    fun fixProviderLong(pointer: ValueProvider): Long = pointer.value as Long
-
-    fun fixStructure(structure: Structure): MemorySegment = structure.segment()
-
     fun fixSegment(
         segment: MemorySegment, provider: KType
     ): Any = Pointer<Any>(provider, segment)
 }
 
-fun fixMethodHandle(
+private fun fixMethodHandle(
+    lookup: MethodHandles.Lookup,
     methodHandle: MethodHandle,
     returnType: KType, parameters: List<KTypeProjection>
 ): MethodHandle {
@@ -93,20 +103,21 @@ fun fixMethodHandle(
         val innerType = methodHandle.type().parameterType(index)
         methodHandle = MethodHandles.filterArguments(
             methodHandle,
-            index, (if (Pointer::class.isSuperclassOf(classifier))
-                NativeMethodFilters::fixPointer
-            else if (ValueProvider::class.isSuperclassOf(classifier))
-                when (innerType) {
-                    Byte::class.java -> NativeMethodFilters::fixProviderByte
-                    Int::class.java -> NativeMethodFilters::fixProviderInt
-                    Long::class.java -> NativeMethodFilters::fixProviderLong
-                    else -> throw NotImplementedError("$innerType")
-                }
-            else if (Structure::class.isSuperclassOf(classifier))
-                NativeMethodFilters::fixStructure
-            else throw NotImplementedError("$classifier")).handle().asType(
-                MethodType.methodType(innerType, (parameter.type!!.classifier as KClass<*>).java)
-            )
+            index,
+            (if (ValueProvider::class.isSuperclassOf(classifier)) ValueProvider::value.handle(lookup)
+            else if (Structure::class.isSuperclassOf(classifier)) Structure::segment.handle(lookup)
+            else if (Pointer::class.isSuperclassOf(classifier)) MethodHandles.guardWithTest(
+                Guards.isNotNull().asType(
+                    MethodType.methodType(Boolean::class.java, Pointer::class.java)
+                ),
+                Pointer<*>::segment.handle(lookup),
+                MethodHandles.dropArguments(
+                    MethodHandles.constant(MemorySegment::class.java, MemorySegment.NULL),
+                    0,
+                    Pointer::class.java
+                )
+            ) else throw NotImplementedError("$classifier"))
+                .asType(MethodType.methodType(innerType, classifier.java))
         )
     }
 
@@ -118,11 +129,11 @@ fun fixMethodHandle(
     methodHandle = MethodHandles.filterReturnValue(
         methodHandle,
         if (Pointer::class.isSuperclassOf(returnClass)) MethodHandles.insertArguments(
-                NativeMethodFilters::fixSegment.handle(),
+                NativeMethodFilters::fixSegment.handle(lookup).bindTo(NativeMethodFilters),
                 1, returnType.arguments.first().type!!)
             .asType(fixedType)
         else if (ValueProvider::class.isSuperclassOf(returnClass))
-            MethodHandles.lookup().findConstructor(
+            lookup.findConstructor(
                 returnClass.java,
                 MethodType.methodType(Void.TYPE, Any::class.java)
             )
@@ -132,11 +143,82 @@ fun fixMethodHandle(
     return methodHandle
 }
 
-inline fun <reified L: LibrarySource> get(
+private fun createKFBridge(
+    lookup: MethodHandles.Lookup,
+    parameters: Int, voidReturn: Boolean, methodHandle: MethodHandle
+): Any {
+    return run {
+        val hcd = ClassDesc.of("org.bread_experts_group.bread_systems_library.ffm.AdapterClass")
+        lookup.defineHiddenClass(
+            ClassFile.of().build(hcd) { builder ->
+                builder.withInterfaceSymbols(
+                    ClassDesc.of("kotlin.jvm.functions.Function${parameters}")
+                )
+
+                builder.withField(
+                    "methodHandle", ConstantDescs.CD_MethodHandle,
+                    AccessFlag.PRIVATE.mask() or AccessFlag.FINAL.mask()
+                )
+
+                builder.withMethodBody(
+                    "invoke", MethodTypeDesc.of(
+                        ConstantDescs.CD_Object,
+                        List(parameters) { ConstantDescs.CD_Object }
+                    ),
+                    AccessFlag.PUBLIC.mask()
+                ) { codeBuilder ->
+                    codeBuilder
+                        .aload(0)
+                        .getfield(hcd, "methodHandle", ConstantDescs.CD_MethodHandle)
+                    val type = methodHandle.type()
+                    println(type)
+                    repeat(parameters) {
+                        when (val desc = type.parameterType(it).describeConstable().get()) {
+                            ConstantDescs.CD_int, ConstantDescs.CD_short, ConstantDescs.CD_byte -> codeBuilder.iload(it + 1)
+                            ConstantDescs.CD_float -> codeBuilder.iload(it + 1)
+                            else if desc.isClassOrInterface -> codeBuilder.aload(it + 1).checkcast(desc)
+                            else -> TODO("${desc.descriptorString()}")
+                        }
+                    }
+                    codeBuilder.invokevirtual(
+                        ConstantDescs.CD_MethodHandle, "invoke",
+                        type.describeConstable().get()
+                    )
+                    if (voidReturn) codeBuilder.getstatic(
+                        ClassDesc.of(Unit::class.qualifiedName),
+                        "INSTANCE",
+                        ClassDesc.of(Unit::class.qualifiedName)
+                    )
+                    codeBuilder.areturn()
+                }
+
+                builder.withMethodBody(
+                    "<init>", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_MethodHandle),
+                    AccessFlag.PUBLIC.mask()
+                ) { codeBuilder ->
+                    codeBuilder
+                        .aload(0)
+                        .dup()
+                        .invokespecial(
+                            ConstantDescs.CD_Object, "<init>",
+                            MethodTypeDesc.of(ConstantDescs.CD_void)
+                        )
+                        .aload(1)
+                        .putfield(hcd, "methodHandle", ConstantDescs.CD_MethodHandle)
+                        .return_()
+                }
+            },
+            true
+        ).lookupClass().getConstructor(MethodHandle::class.java)
+    }.newInstance(methodHandle)
+}
+
+fun get(
+    type: KType,
     lookup: SymbolLookup,
     linker: Linker
-): L {
-    val constructor = L::class.constructors.first()
+): Any {
+    val constructor = (type.classifier as KClass<*>).constructors.first()
     val arguments = arrayOfNulls<Any>(constructor.parameters.size)
     constructor.parameters.forEach { parameter ->
         if (parameter.type.classifier == Linker::class) {
@@ -149,6 +231,7 @@ inline fun <reified L: LibrarySource> get(
         val classifier = parameter.type.classifier as KClass<*>
         val parameterArguments = parameter.type.arguments
 
+        val lookup = MethodHandles.lookup()
         if (Function::class.isSuperclassOf(classifier)) {
             val parameters = parameterArguments.subList(0, parameterArguments.lastIndex)
             val parametersArray = parameters.map { parameter ->
@@ -160,10 +243,14 @@ inline fun <reified L: LibrarySource> get(
 
             var ple = false
             val options = mutableListOf<Linker.Option>()
-            for (annotation in parameter.type.annotations) {
-                if (annotation is Critical) options.add(Linker.Option.critical(annotation.heapAccess))
-                if (annotation is PreserveLastError) {
+            for (annotation in parameter.type.annotations) when (annotation) {
+                is Critical -> options.add(Linker.Option.critical(annotation.heapAccess))
+                is PreserveLastError -> {
                     options.add(Linker.Option.captureCallState(LAST_ERROR))
+                    ple = true
+                }
+                is PreserveErrno -> {
+                    options.add(Linker.Option.captureCallState(ERRNO))
                     ple = true
                 }
             }
@@ -175,19 +262,9 @@ inline fun <reified L: LibrarySource> get(
                     *options.toTypedArray()
                 )
                 if (ple) methodHandle = MethodHandles.insertArguments(methodHandle, 0, StateLayout.local.get())
-                methodHandle = fixMethodHandle(methodHandle, returnType, parameters)
+                methodHandle = fixMethodHandle(lookup, methodHandle, returnType, parameters)
 
-                arguments[parameter.index] = when (val size = parameterArguments.size) {
-                    2 -> object : Function1<Any?, Unit> {
-                        override fun invoke(
-                            p1: Any?
-                        ) {
-                            methodHandle.invoke(p1)
-                        }
-                    }
-
-                    else -> throw NotImplementedError("Function ... $size")
-                }
+                arguments[parameter.index] = createKFBridge(lookup, parameterArguments.size - 1, true, methodHandle)
             } else {
                 var methodHandle = linker.downcallHandle(
                     procedure,
@@ -198,72 +275,15 @@ inline fun <reified L: LibrarySource> get(
                     *options.toTypedArray()
                 )
                 if (ple) methodHandle = MethodHandles.insertArguments(methodHandle, 0, StateLayout.local.get())
-                methodHandle = fixMethodHandle(methodHandle, returnType, parameters)
-
-                arguments[parameter.index] = when (val size = parameterArguments.size) {
-                    1 -> object : Function0<Any> {
-                        override fun invoke(): Any = methodHandle.invoke()
-                    }
-
-                    2 -> object : Function1<Any?, Any> {
-                        override fun invoke(
-                            p1: Any?
-                        ): Any = methodHandle.invoke(p1)
-                    }
-
-                    3 -> object : Function2<Any?, Any?, Any> {
-                        override fun invoke(
-                            p1: Any?, p2: Any?
-                        ): Any = methodHandle.invoke(p1, p2)
-                    }
-
-                    4 -> object : Function3<Any?, Any?, Any?, Any> {
-                        override fun invoke(
-                            p1: Any?, p2: Any?, p3: Any?
-                        ): Any = methodHandle.invoke(p1, p2, p3)
-                    }
-
-                    5 -> object : Function4<Any?, Any?, Any?, Any?, Any> {
-                        override fun invoke(
-                            p1: Any?, p2: Any?, p3: Any?,
-                            p4: Any?
-                        ): Any = methodHandle.invoke(p1, p2, p3, p4)
-                    }
-
-                    6 -> object : Function5<Any?, Any?, Any?, Any?, Any?, Any> {
-                        override fun invoke(
-                            p1: Any?, p2: Any?, p3: Any?,
-                            p4: Any?, p5: Any?
-                        ): Any = methodHandle.invoke(p1, p2, p3, p4, p5)
-                    }
-
-                    7 -> object : Function6<Any?, Any?, Any?, Any?, Any?, Any?, Any> {
-                        override fun invoke(
-                            p1: Any?, p2: Any?, p3: Any?,
-                            p4: Any?, p5: Any?, p6: Any?
-                        ): Any = methodHandle.invoke(p1, p2, p3, p4, p5, p6)
-                    }
-
-                    8 -> object : Function7<Any?, Any?, Any?, Any?, Any?, Any?, Any?, Any> {
-                        override fun invoke(
-                            p1: Any?, p2: Any?, p3: Any?,
-                            p4: Any?, p5: Any?, p6: Any?,
-                            p7: Any?
-                        ): Any = methodHandle.invoke(p1, p2, p3, p4, p5, p6, p7)
-                    }
-
-                    9 -> object : Function8<Any?, Any?, Any?, Any?, Any?, Any?, Any?, Any?, Any> {
-                        override fun invoke(
-                            p1: Any?, p2: Any?, p3: Any?,
-                            p4: Any?, p5: Any?, p6: Any?,
-                            p7: Any?, p8: Any?
-                        ): Any = methodHandle.invoke(p1, p2, p3, p4, p5, p6, p7, p8)
-                    }
-
-                    else -> throw NotImplementedError("Function ... $size")
-                }
+                methodHandle = fixMethodHandle(lookup, methodHandle, returnType, parameters)
+                arguments[parameter.index] = createKFBridge(lookup, parameterArguments.size - 1, false, methodHandle)
             }
         } else throw IllegalArgumentException("Unable to translate (unknown): $parameter")
     }
     return constructor.call(*arguments)
 }
+
+inline fun <reified L: LibrarySource> get(
+    lookup: SymbolLookup,
+    linker: Linker
+): L = get(typeOf<L>(), lookup, linker) as L

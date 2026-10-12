@@ -9,6 +9,7 @@ object StateLayout {
     private val state = Linker.Option.captureStateLayout()
     val local: ThreadLocal<MemorySegment> = ThreadLocal.withInitial { Arena.global().allocate(state) }
 
+    const val ERRNO = "errno"
     const val LAST_ERROR = "GetLastError"
 
     fun get(name: String): Any = state.varHandle(groupElement(name)).get(local.get(), 0L)

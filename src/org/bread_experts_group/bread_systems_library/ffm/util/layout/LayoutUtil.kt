@@ -1,6 +1,5 @@
 package org.bread_experts_group.bread_systems_library.ffm.util.layout
 
-import org.bread_experts_group.bread_systems_library.ffm.NativeMethodFilters
 import org.bread_experts_group.bread_systems_library.ffm.Structure
 import org.bread_experts_group.bread_systems_library.ffm.Union
 import org.bread_experts_group.bread_systems_library.ffm.c.types.Pointer
@@ -54,16 +53,15 @@ fun MemoryLayout.writeIndirect(into: MemorySegment, offset: Long, from: MemorySe
 fun KType.computeLayout(
     linker: Linker,
     padEnd: Boolean = true,
-    alignment: Long? = null
+    unaligned: Boolean = false
 ): MemoryLayout {
     val clazz = this.classifier!! as KClass<*>
     val layouts = mutableListOf<MemoryLayout>()
     clazz.memberProperties.sortedBy { it.findAnnotation<Order>()!!.order }.forEach {
         layouts.add(
             resolveType(it.returnType, this)
-                .memoryLayout(linker, padEnd, alignment)
+                .memoryLayout(linker, padEnd, unaligned)
                 .withName(it.name)
-                .let { layout -> if (alignment != null) layout.withByteAlignment(alignment) else layout }
         )
     }
 
@@ -95,17 +93,17 @@ fun KType.computeLayout(
         *layouts.toTypedArray()
     )
     return layout.withName(clazz.simpleName).let {
-        if (alignment != null) it.withByteAlignment(alignment) else it
+        if (unaligned) it.withByteAlignment(1) else it
     }
 }
 
 private val imageCache = mutableMapOf<LayoutConfiguration, (MemorySegment) -> Any>()
 
-private fun imageDry(encoded: KType, alignment: Long? = null): (MemorySegment) -> Any {
+private fun imageDry(encoded: KType, unaligned: Boolean = false): (MemorySegment) -> Any {
     val encodedClass = encoded.classifier as KClass<*>
     if (encodedClass == Nothing::class) throw UnsupportedOperationException("Opaque pointer")
     if (Structure::class.isSuperclassOf(encodedClass)) {
-        val layout = encoded.computeLayout(Linker.nativeLinker(), alignment = alignment)
+        val layout = encoded.computeLayout(Linker.nativeLinker(), unaligned = unaligned)
 
         val methods = mutableMapOf<Method, ImageMethodKind>()
         encodedClass.memberProperties.forEach {
@@ -127,23 +125,25 @@ private fun imageDry(encoded: KType, alignment: Long? = null): (MemorySegment) -
                         ValueLayout.JAVA_BYTE -> if (clazz == Byte::class) { structureSegment: MemorySegment, a: Any ->
                             handle.set(structureSegment, 0L, a)
                         } else { structureSegment: MemorySegment, a: Any ->
-                            handle.set(structureSegment, 0L, NativeMethodFilters.fixProviderByte(a as ValueProvider))
+                            handle.set(structureSegment, 0L, (a as ValueProvider).value as Byte)
                         }
 
                         ValueLayout.JAVA_SHORT -> if (clazz == Short::class) { structureSegment: MemorySegment, a: Any ->
                             handle.set(structureSegment, 0L, a)
                         } else { structureSegment: MemorySegment, a: Any ->
-                            handle.set(structureSegment, 0L, NativeMethodFilters.fixProviderShort(a as ValueProvider))
+                            handle.set(structureSegment, 0L, (a as ValueProvider).value as Short)
                         }
 
                         ValueLayout.JAVA_INT -> if (clazz == Int::class) { structureSegment: MemorySegment, a: Any ->
                             handle.set(structureSegment, 0L, a)
                         } else { structureSegment: MemorySegment, a: Any ->
-                            handle.set(structureSegment, 0L, NativeMethodFilters.fixProviderInt(a as ValueProvider))
+                            handle.set(structureSegment, 0L, (a as ValueProvider).value as Int)
                         }
 
-                        ValueLayout.JAVA_LONG -> { structureSegment: MemorySegment, a: Any ->
-                            TODO("!!")
+                        ValueLayout.JAVA_LONG -> if (clazz == Long::class) { structureSegment: MemorySegment, a: Any ->
+                            handle.set(structureSegment, 0L, a)
+                        } else { structureSegment: MemorySegment, a: Any ->
+                            handle.set(structureSegment, 0L, (a as ValueProvider).value as Long)
                         }
 
                         ValueLayout.ADDRESS -> { structureSegment: MemorySegment, a: Any ->
@@ -210,10 +210,10 @@ private fun imageDry(encoded: KType, alignment: Long? = null): (MemorySegment) -
     throw NotImplementedError("$encoded")
 }
 
-fun image(encoded: KType, segment: MemorySegment, alignment: Long? = null): Any = imageCache.getOrPut(
-    LayoutConfiguration(alignment, @OptIn(ExperimentalStdlibApi::class) encoded.javaType)
+fun image(encoded: KType, segment: MemorySegment, unaligned: Boolean = false): Any = imageCache.getOrPut(
+    LayoutConfiguration(unaligned, @OptIn(ExperimentalStdlibApi::class) encoded.javaType)
 ) {
-    imageDry(encoded, alignment)
+    imageDry(encoded, unaligned)
 }(segment)
 
 inline fun <reified T : Any> image(segment: MemorySegment): T = image(typeOf<T>(), segment) as T

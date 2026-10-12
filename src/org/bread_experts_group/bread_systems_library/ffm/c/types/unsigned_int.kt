@@ -3,4 +3,4 @@ package org.bread_experts_group.bread_systems_library.ffm.c.types
 import org.bread_experts_group.bread_systems_library.generic.ValueProvider
 
 @Suppress("ClassName")
-open class `unsigned int`(value: Any?) : ValueProvider(value)
+open class unsigned_int(value: Any?) : ValueProvider(value)

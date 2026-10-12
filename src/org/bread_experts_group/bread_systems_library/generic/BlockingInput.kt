@@ -18,7 +18,10 @@ class BlockingInput {
     private val rCondition = lock.writeLock().newCondition()
     private val data = mutableListOf<ByteBuffer>()
 
+    var reads = 0L
+
     private fun hasEnough(space: Int): Boolean {
+        if (space == 0) return true
         if (data.isEmpty()) return false
         var count = 0
         for (slice in data) {
@@ -38,12 +41,22 @@ class BlockingInput {
         suspend(Byte.SIZE_BYTES)
         val available = data.first()
         val value = available.get()
+        reads++
         if (!available.hasRemaining()) data.removeFirst()
         return value
     }
 
-    fun readStructure(type: KType, linker: Linker): Any = lock.read {
-        var size = type.computeLayout(linker).byteSize().toInt()
+    fun readInt(): Int = lock.read {
+        suspend(Int.SIZE_BYTES)
+        val available = data.first()
+        val value = available.getInt()
+        reads += Int.SIZE_BYTES
+        if (!available.hasRemaining()) data.removeFirst()
+        return value
+    }
+
+    fun readBytes(length: Int): ByteArray = lock.read {
+        var size = length
         suspend(size)
         val structData = ByteArray(size)
         var offset = 0
@@ -51,11 +64,22 @@ class BlockingInput {
             val buffer = data.first()
             val length = min(buffer.remaining(), size)
             buffer.get(structData, offset, length)
+            reads += length
             if (!buffer.hasRemaining()) data.removeFirst()
             offset += length
             size -= length
         }
-        return image(type, MemorySegment.ofArray(structData), 1)
+        return structData
+    }
+
+    fun readStructure(type: KType, linker: Linker): Any = lock.read {
+        return image(
+            type,
+            MemorySegment.ofArray(
+                readBytes(type.computeLayout(linker).byteSize().toInt())
+            ),
+            true
+        )
     }
 
     inline fun <reified T : Structure> readStructure(linker: Linker): T = readStructure(typeOf<T>(), linker) as T
@@ -67,9 +91,16 @@ class BlockingInput {
             val buffer = data.first()
             val skip = min(buffer.remaining(), length)
             buffer.position(buffer.position() + skip)
+            reads += skip
             if (!buffer.hasRemaining()) data.removeFirst()
             length -= length
         }
+    }
+
+    fun align(to: Long) {
+        val remainder = reads % to
+        if (remainder == 0L) return
+        skip((to - remainder).toInt())
     }
 
     fun load(data: ByteArray) = lock.write {
