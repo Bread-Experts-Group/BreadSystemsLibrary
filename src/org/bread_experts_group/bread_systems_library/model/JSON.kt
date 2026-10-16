@@ -69,7 +69,7 @@ fun jsonParse(input: Reader): JSONPrimitive? {
                 when (val char = read()) {
                     '.' -> TODO("Frac")
                     'E', 'e' -> TODO("Exp")
-                    ',', ' ', '\n', '\r', '\t' -> lastConsumed = char
+                    ',', ' ', '\n', '\r', '\t', '}', ']' -> lastConsumed = char
                     else -> throw IllegalStateException("Parsing zero: got unexpected '$char'")
                 }
                 // fraction
@@ -89,7 +89,7 @@ fun jsonParse(input: Reader): JSONPrimitive? {
                 while (true) when (val char = read()) {
                     '.' -> TODO("Frac")
                     'E', 'e' -> TODO("Exp")
-                    ',', ' ', '\n', '\r', '\t' -> {
+                    ',', ' ', '\n', '\r', '\t', '}', ']' -> {
                         lastConsumed = char
                         break
                     }

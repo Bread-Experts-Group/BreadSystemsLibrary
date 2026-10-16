@@ -15,8 +15,12 @@ import org.bread_experts_group.bread_systems_library.ffm.util.layout.NativeArray
 import org.bread_experts_group.bread_systems_library.ffm.util.layout.computeLayout
 import org.bread_experts_group.bread_systems_library.generic.BlockingInput
 import org.bread_experts_group.bread_systems_library.generic.FlushingOutput
+import test.router.WirelessPhysicalInterface.Band
 import java.lang.foreign.*
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.CompletableFuture
+import kotlin.properties.Delegates
 import kotlin.reflect.typeOf
 
 class GenericNetLink(private val libc: libc) {
@@ -88,7 +92,13 @@ class GenericNetLink(private val libc: libc) {
                         decoder.skip(hdr.nlmsg_len - hdr.segment().byteSize().toInt())
                     }
 
-                    NLMSG_ERROR, NLMSG_OVERRUN -> TODO("!")
+                    NLMSG_ERROR -> {
+                        println(decoder.readInt())
+                        decoder.skip(hdr.nlmsg_len - hdr.segment().byteSize().toInt() - 4)
+                        messages[hdr.nlmsg_seq]!!.second.complete(emptyList())
+                    }
+
+                    NLMSG_OVERRUN -> TODO("!")
 
                     NLMSG_DONE -> {
                         val work = messages.remove(hdr.nlmsg_seq)
@@ -180,72 +190,171 @@ fun main() {
         }
     }
 
+    val wirelessPhysicalInterfacesC = mutableMapOf<Int, WirelessPhysicalInterface.Construction>()
     nlData.forEach { data ->
+        var wiphyConstruction by Delegates.notNull<WirelessPhysicalInterface.Construction>()
         data.attributes.forEach {
             when (it.structure.nla_type) {
-                NL80211_ATTR_WIPHY_NAME.toShort() -> println(it.data.decodeToString())
+                NL80211_ATTR_WIPHY.toShort() -> {
+                    wiphyConstruction = wirelessPhysicalInterfacesC.getOrPut(
+                        MemorySegment.ofArray(it.data).get(ValueLayout.JAVA_INT_UNALIGNED, 0)
+                    ) { WirelessPhysicalInterface.Construction() }
+                }
+
+                NL80211_ATTR_WIPHY_NAME.toShort() -> {
+                    wiphyConstruction.name = MemorySegment.ofArray(it.data).getString(0, Charsets.UTF_8)
+                }
+
                 NL80211_ATTR_WIPHY_BANDS.toShort() -> {
-                    println("Bands")
-                    attributes(it).forEachIndexed { index, band ->
-                        println(" # $index [${band.structure.nla_type}]")
+                    attributes(it).forEach { band ->
+                        val bandConstruction = wiphyConstruction.bands.getOrPut(band.structure.nla_type.toUShort()) {
+                            Band.Construction()
+                        }
                         attributes(band).forEachIndexed { _, bandAttribute ->
                             when (bandAttribute.structure.nla_type) {
+                                NL80211_BAND_ATTR_FREQS.toShort() -> {
+                                    attributes(bandAttribute).forEach { frequency ->
+                                        val freqConstruction = bandConstruction.frequencies.getOrPut(frequency.structure.nla_type.toUShort()) {
+                                            Band.Frequency.Construction()
+                                        }
+                                        attributes(frequency).forEach { frequencyAttribute ->
+                                            val segment = MemorySegment.ofArray(frequencyAttribute.data)
+                                            when (frequencyAttribute.structure.nla_type) {
+                                                NL80211_FREQUENCY_ATTR_FREQ.toShort() -> freqConstruction.frequencyHz = (
+                                                        segment.get(ValueLayout.JAVA_INT_UNALIGNED, 0).toLong() and 0xFFFFFFFF
+                                                ) * 1_000_000
+//                                                NL80211_FREQUENCY_ATTR_DISABLED.toShort() -> println(
+//                                                    "   Disabled (regulatory)"
+//                                                )
+//                                                NL80211_FREQUENCY_ATTR_NO_IR.toShort() -> println(
+//                                                    "   No emitted radiation (regulatory)"
+//                                                )
+//                                                NL80211_FREQUENCY_ATTR_NO_IBSS.toShort() -> println(
+//                                                    "   IBSS networks disabled (regulatory)"
+//                                                )
+//                                                NL80211_FREQUENCY_ATTR_RADAR.toShort() -> println(
+//                                                    "   Radar detection (regulatory)"
+//                                                )
+//                                                NL80211_FREQUENCY_ATTR_MAX_TX_POWER.toShort() -> println(
+//                                                    "   Max TX ${MemorySegment.ofArray(frequencyAttribute.data).get(ValueLayout.JAVA_INT_UNALIGNED, 0)} mBm"
+//                                                )
+//                                                NL80211_FREQUENCY_ATTR_OFFSET.toShort() -> println(
+//                                                    "   Frequency offset ${MemorySegment.ofArray(frequencyAttribute.data).get(ValueLayout.JAVA_INT_UNALIGNED, 0)} kHz"
+//                                                )
+
+                                                else -> freqConstruction.attributes.add(frequencyAttribute)
+                                            }
+                                        }
+                                    }
+                                }
+
                                 NL80211_BAND_ATTR_RATES.toShort() -> {
-                                    println("  Rates")
-                                    attributes(bandAttribute).forEachIndexed { index, rate ->
-                                        println("  # $index [${rate.structure.nla_type}]")
+                                    attributes(bandAttribute).forEach { rate ->
+                                        val freqConstruction = bandConstruction.rates.getOrPut(rate.structure.nla_type.toUShort()) {
+                                            Band.Rate.Construction()
+                                        }
                                         attributes(rate).forEachIndexed { _, frequencyAttribute ->
                                             when (frequencyAttribute.structure.nla_type) {
-                                                NL80211_BITRATE_ATTR_RATE.toShort() -> println(
-                                                    "   ${MemorySegment.ofArray(frequencyAttribute.data).get(ValueLayout.JAVA_INT_UNALIGNED, 0) * 100} Kbps"
-                                                )
-                                                else -> println("   $frequencyAttribute")
+//                                                NL80211_BITRATE_ATTR_RATE.toShort() -> println(
+//                                                    "   ${MemorySegment.ofArray(frequencyAttribute.data).get(ValueLayout.JAVA_INT_UNALIGNED, 0) * 100} Kbps"
+//                                                )
+
+                                                else -> freqConstruction.attributes.add(frequencyAttribute)
                                             }
                                         }
                                     }
                                 }
 
-                                NL80211_BAND_ATTR_FREQS.toShort() -> {
-                                    println("  Frequencies")
-                                    attributes(bandAttribute).forEachIndexed { index, frequency ->
-                                        println("  # $index [${frequency.structure.nla_type}]")
-                                        attributes(frequency).forEachIndexed { _, frequencyAttribute ->
-                                            when (frequencyAttribute.structure.nla_type) {
-                                                NL80211_FREQUENCY_ATTR_FREQ.toShort() -> println(
-                                                    "   ${MemorySegment.ofArray(frequencyAttribute.data).get(ValueLayout.JAVA_INT_UNALIGNED, 0)} MHz"
-                                                )
-                                                NL80211_FREQUENCY_ATTR_DISABLED.toShort() -> println(
-                                                    "   Disabled (regulatory)"
-                                                )
-                                                NL80211_FREQUENCY_ATTR_NO_IR.toShort() -> println(
-                                                    "   No emitted radiation (regulatory)"
-                                                )
-                                                NL80211_FREQUENCY_ATTR_NO_IBSS.toShort() -> println(
-                                                    "   IBSS networks disabled (regulatory)"
-                                                )
-                                                NL80211_FREQUENCY_ATTR_RADAR.toShort() -> println(
-                                                    "   Radar detection (regulatory)"
-                                                )
-                                                NL80211_FREQUENCY_ATTR_MAX_TX_POWER.toShort() -> println(
-                                                    "   Max TX ${MemorySegment.ofArray(frequencyAttribute.data).get(ValueLayout.JAVA_INT_UNALIGNED, 0)} mBm"
-                                                )
-                                                NL80211_FREQUENCY_ATTR_OFFSET.toShort() -> println(
-                                                    "   Frequency offset ${MemorySegment.ofArray(frequencyAttribute.data).get(ValueLayout.JAVA_INT_UNALIGNED, 0)} kHz"
-                                                )
-
-                                                else -> println("   $frequencyAttribute")
-                                            }
-                                        }
-                                    }
-                                }
-
-                                else -> println("  $bandAttribute")
+                                else -> bandConstruction.attributes.add(bandAttribute)
                             }
                         }
                     }
                 }
-                else -> println(it)
+                else -> wiphyConstruction.attributes.add(it)
             }
         }
     }
+    val wirelessPhysicalInterfaces = Array(wirelessPhysicalInterfacesC.keys.max() + 1) {
+        wirelessPhysicalInterfacesC[it]!! as WirelessPhysicalInterface
+    }
+
+    val ifIndex = ByteBuffer.allocate(4)
+        .order(ByteOrder.LITTLE_ENDIAN)
+        .putInt(5)
+        .array()
+    val NL80211_IFTYPE_AP = 3
+    gnl.send(
+        nlFamilyID,
+        NL80211_CMD_SET_INTERFACE.toByte(),
+        NLM_F_ACK.toUShort(),
+        listOf(
+            NL80211_ATTR_IFINDEX.toShort() to ifIndex,
+            NL80211_ATTR_IFTYPE.toShort() to ByteBuffer.allocate(4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(NL80211_IFTYPE_AP)
+                .array()
+        )
+    ).thenAccept {
+        println(it)
+    }.join()
+
+    gnl.send(
+        nlFamilyID,
+        NL80211_CMD_SET_WIPHY.toByte(),
+        NLM_F_ACK.toUShort(),
+        listOf(
+            NL80211_ATTR_IFINDEX.toShort() to ifIndex,
+            NL80211_ATTR_WIPHY_FREQ.toShort() to ByteBuffer.allocate(4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(2412)
+                .array()
+        )
+    ).thenAccept {
+        println(it)
+    }.join()
+
+    // TODO:
+    // NL80211_ATTR_BEACON_INTERVAL (u32, TU (1024 microseconds))
+    // NL80211_ATTR_DTIM_PERIOD (u32)
+    // NL80211_ATTR_BEACON_HEAD (binary)
+    val leInt: (Int) -> ByteArray = {
+        ByteBuffer.allocate(4)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(it)
+            .array()
+    }
+
+    gnl.send(
+        nlFamilyID,
+        NL80211_CMD_STOP_AP.toByte(),
+        NLM_F_ACK.toUShort(),
+        listOf(
+            NL80211_ATTR_SSID.toShort() to "test".toByteArray(Charsets.UTF_8),
+            NL80211_ATTR_IFINDEX.toShort() to leInt(5),
+            NL80211_ATTR_BEACON_INTERVAL.toShort() to leInt(100),
+            NL80211_ATTR_DTIM_PERIOD.toShort() to leInt(1),
+            NL80211_ATTR_BEACON_HEAD.toShort() to
+                    "80000000ffffffffffff0ccdb46cf3bb0ccdb46cf3bb0000000000000000000064000100"
+                        .hexToByteArray(),
+            NL80211_ATTR_BEACON_TAIL.toShort() to
+                    byteArrayOf(0x05, 0x04, 0x00, 0x01, 0x00, 0x00)
+        )
+    ).thenAccept(::println).join()
+
+    gnl.send(
+        nlFamilyID,
+        NL80211_CMD_START_AP.toByte(),
+        NLM_F_ACK.toUShort(),
+        listOf(
+            NL80211_ATTR_IFINDEX.toShort() to leInt(5),
+            NL80211_ATTR_BEACON_INTERVAL.toShort() to leInt(100),
+            NL80211_ATTR_DTIM_PERIOD.toShort() to leInt(1),
+            NL80211_ATTR_BEACON_HEAD.toShort() to
+                    "80000000ffffffffffff0ccdb46cf3bb0ccdb46cf3bb00000000000000000000000064000100000474657374010482848b96030101"
+                        .hexToByteArray(),
+            NL80211_ATTR_BEACON_TAIL.toShort() to
+                    byteArrayOf(0x05, 0x04, 0x00, 0x01, 0x00, 0x00)
+        )
+    ).thenAccept(::println).join()
+    Thread.sleep(99999999)
 }

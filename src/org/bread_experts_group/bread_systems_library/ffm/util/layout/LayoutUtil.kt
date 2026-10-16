@@ -174,16 +174,26 @@ private fun imageDry(encoded: KType, unaligned: Boolean = false): (MemorySegment
                 encodedClass.java.classLoader,
                 arrayOf(encodedClass.java)
             ) { proxy, method, args ->
-                if (method == Object::toString.javaMethod!!) {
-                    return@newProxyInstance "$it -> ${encodedClass.simpleName}(${encodedClass.memberProperties
+                when (method) {
+                    Object::toString.javaMethod!! -> return@newProxyInstance "$it -> ${encodedClass.simpleName}(${encodedClass.memberProperties
                         .sortedBy { prop -> prop.findAnnotation<Order>()!!.order }
                         .joinToString { prop ->
-                        "${prop.name}: ${(prop as KProperty1<Any, Any>).get(proxy)}"
-                    }})"
-                }
+                            "${prop.name}: ${(prop as KProperty1<Any, Any>).get(proxy)}"
+                        }})"
+                    Object::hashCode.javaMethod!! -> return@newProxyInstance encodedClass.memberProperties.map { prop ->
+                        (prop as KProperty1<Any, Any>).get(proxy)
+                    }.toTypedArray().contentHashCode()
+                    Object::equals.javaMethod!! -> {
+                        val other = args[0]
+                        if (!encodedClass.isInstance(other)) return@newProxyInstance false
+                        encodedClass.memberProperties.forEach { prop ->
+                            val prop = prop as KProperty1<Any, Any>
+                            if (prop.get(proxy) != prop.get(other)) return@newProxyInstance false
+                        }
+                        return@newProxyInstance true
+                    }
 
-                if (method == Structure::segment.javaMethod!!) {
-                    return@newProxyInstance it
+                    Structure::segment.javaMethod!! -> return@newProxyInstance it
                 }
 
                 when (val method = methods[method]!!) {

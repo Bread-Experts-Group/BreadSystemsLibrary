@@ -6,6 +6,7 @@ import org.bread_experts_group.bread_systems_library.ffm.util.layout.image
 import java.lang.foreign.Linker
 import java.lang.foreign.MemorySegment
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
@@ -104,7 +105,7 @@ class BlockingInput {
     }
 
     fun load(data: ByteArray) = lock.write {
-        this.data.addLast(ByteBuffer.wrap(data))
+        this.data.addLast(ByteBuffer.wrap(data).order(ByteOrder.nativeOrder()))
         rCondition.signalAll()
     }
 }

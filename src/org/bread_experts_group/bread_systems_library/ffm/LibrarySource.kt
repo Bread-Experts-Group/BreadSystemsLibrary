@@ -171,7 +171,6 @@ private fun createKFBridge(
                         .aload(0)
                         .getfield(hcd, "methodHandle", ConstantDescs.CD_MethodHandle)
                     val type = methodHandle.type()
-                    println(type)
                     repeat(parameters) {
                         when (val desc = type.parameterType(it).describeConstable().get()) {
                             ConstantDescs.CD_int, ConstantDescs.CD_short, ConstantDescs.CD_byte -> codeBuilder.iload(it + 1)
