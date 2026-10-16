@@ -1,4 +1,4 @@
-package test.router
+package router
 
 import org.bread_experts_group.bread_systems_library.ffm.c.types.Pointer
 import org.bread_experts_group.bread_systems_library.ffm.c.types.int
@@ -15,7 +15,6 @@ import org.bread_experts_group.bread_systems_library.ffm.util.layout.NativeArray
 import org.bread_experts_group.bread_systems_library.ffm.util.layout.computeLayout
 import org.bread_experts_group.bread_systems_library.generic.BlockingInput
 import org.bread_experts_group.bread_systems_library.generic.FlushingOutput
-import test.router.WirelessPhysicalInterface.Band
 import java.lang.foreign.*
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -208,14 +207,14 @@ fun main() {
                 NL80211_ATTR_WIPHY_BANDS.toShort() -> {
                     attributes(it).forEach { band ->
                         val bandConstruction = wiphyConstruction.bands.getOrPut(band.structure.nla_type.toUShort()) {
-                            Band.Construction()
+                            WirelessPhysicalInterface.Band.Construction()
                         }
                         attributes(band).forEachIndexed { _, bandAttribute ->
                             when (bandAttribute.structure.nla_type) {
                                 NL80211_BAND_ATTR_FREQS.toShort() -> {
                                     attributes(bandAttribute).forEach { frequency ->
                                         val freqConstruction = bandConstruction.frequencies.getOrPut(frequency.structure.nla_type.toUShort()) {
-                                            Band.Frequency.Construction()
+                                            WirelessPhysicalInterface.Band.Frequency.Construction()
                                         }
                                         attributes(frequency).forEach { frequencyAttribute ->
                                             val segment = MemorySegment.ofArray(frequencyAttribute.data)
@@ -251,7 +250,7 @@ fun main() {
                                 NL80211_BAND_ATTR_RATES.toShort() -> {
                                     attributes(bandAttribute).forEach { rate ->
                                         val freqConstruction = bandConstruction.rates.getOrPut(rate.structure.nla_type.toUShort()) {
-                                            Band.Rate.Construction()
+                                            WirelessPhysicalInterface.Band.Rate.Construction()
                                         }
                                         attributes(rate).forEachIndexed { _, frequencyAttribute ->
                                             when (frequencyAttribute.structure.nla_type) {

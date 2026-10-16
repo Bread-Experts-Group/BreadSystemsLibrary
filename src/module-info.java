@@ -6,4 +6,6 @@ open module BreadSystemsLibrary {
 
     requires java.xml;
     requires java.net.http;
+
+    exports org.bread_experts_group.bread_systems_library.model;
 }

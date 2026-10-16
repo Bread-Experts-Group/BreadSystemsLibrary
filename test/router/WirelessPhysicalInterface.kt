@@ -1,4 +1,4 @@
-package test.router
+package router
 
 sealed interface WirelessPhysicalInterface {
     val name: String?

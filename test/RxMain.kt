@@ -1,5 +1,3 @@
-package test
-
 import org.bread_experts_group.bread_systems_library.model.*
 import org.bread_experts_group.bread_systems_library.model.rx.NationalDrugCode
 import org.bread_experts_group.bread_systems_library.model.rx.dea.DEASchedule

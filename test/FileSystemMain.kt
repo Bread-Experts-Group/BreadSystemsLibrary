@@ -1,5 +1,3 @@
-package test
-
 import org.bread_experts_group.bread_systems_library.ffm.get
 import org.bread_experts_group.bread_systems_library.ffm.windows.Kernel32
 import org.bread_experts_group.bread_systems_library.ffm.windows.KernelBase

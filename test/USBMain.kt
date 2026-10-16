@@ -1,5 +1,3 @@
-package test
-
 import org.bread_experts_group.bread_systems_library.ffm.Structure
 import org.bread_experts_group.bread_systems_library.ffm.c.types.Pointer
 import org.bread_experts_group.bread_systems_library.ffm.get
