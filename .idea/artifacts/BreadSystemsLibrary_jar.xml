@@ -3,6 +3,7 @@
     <output-path>$PROJECT_DIR$/out/artifacts/BreadSystemsLibrary_jar</output-path>
     <root id="archive" name="BreadSystemsLibrary.jar">
       <element id="module-output" name="BreadSystemsLibrary" />
+      <element id="module-source" name="BreadSystemsLibrary" />
     </root>
   </artifact>
 </component>

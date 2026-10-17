@@ -37,9 +37,10 @@ class BlockingInput {
     private fun suspend(space: Int) {
         while (true) {
             val required = hasEnough(space)
-            if (required == 0) break
+            if (required == 0) return
             lock.write {
                 suspensionNotification?.invoke(required)
+                if (hasEnough(space) == 0) return
                 rCondition.await()
             }
         }
@@ -54,13 +55,8 @@ class BlockingInput {
         return value
     }
 
-    fun readInt(): Int = lock.read {
-        suspend(Int.SIZE_BYTES)
-        val available = data.first()
-        val value = available.getInt()
-        reads += Int.SIZE_BYTES
-        if (!available.hasRemaining()) data.removeFirst()
-        return value
+    fun readInt(): Int = lock.read { // TODO
+        return ByteBuffer.wrap(readBytes(4)).order(ByteOrder.nativeOrder()).getInt()
     }
 
     fun readBytes(length: Int): ByteArray = lock.read {
