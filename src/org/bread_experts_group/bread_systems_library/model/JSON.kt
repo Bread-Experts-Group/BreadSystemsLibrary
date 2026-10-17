@@ -42,7 +42,7 @@ fun jsonParse(input: Reader): JSONPrimitive? {
         var escaping = false
         while (true) when (val char = read()) {
             else if escaping -> {
-                when (val char = read()) {
+                when (char) {
                     '"', '\\', '/' -> builder.append(char)
                     'b' -> builder.append('\b')
                     'f' -> builder.append('\u000C')
