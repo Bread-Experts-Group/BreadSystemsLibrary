@@ -19,22 +19,29 @@ class BlockingInput {
     private val rCondition = lock.writeLock().newCondition()
     private val data = mutableListOf<ByteBuffer>()
 
+    var suspensionNotification: ((required: Int) -> Unit)? = null
+
     var reads = 0L
 
-    private fun hasEnough(space: Int): Boolean {
-        if (space == 0) return true
-        if (data.isEmpty()) return false
+    private fun hasEnough(space: Int): Int {
+        if (space == 0) return 0
+        if (data.isEmpty()) return space
         var count = 0
         for (slice in data) {
             count += slice.remaining()
-            if (count >= space) return true
+            if (count >= space) return 0
         }
-        return false
+        return space - count
     }
 
     private fun suspend(space: Int) {
-        while (!hasEnough(space)) lock.write {
-            rCondition.await()
+        while (true) {
+            val required = hasEnough(space)
+            if (required == 0) break
+            lock.write {
+                suspensionNotification?.invoke(required)
+                rCondition.await()
+            }
         }
     }
 
