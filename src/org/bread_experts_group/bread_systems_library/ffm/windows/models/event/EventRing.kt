@@ -3,9 +3,9 @@ package org.bread_experts_group.bread_systems_library.ffm.windows.models.event
 import org.bread_experts_group.bread_systems_library.ffm.c.types.Pointer
 import org.bread_experts_group.bread_systems_library.ffm.util.SingleElement
 import org.bread_experts_group.bread_systems_library.ffm.util.layout.NativeArray
-import org.bread_experts_group.bread_systems_library.ffm.windows.Kernel32
-import org.bread_experts_group.bread_systems_library.ffm.windows.KernelBase
 import org.bread_experts_group.bread_systems_library.ffm.windows.WindowsCleaningArena
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.Kernel32
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.KernelBase
 import org.bread_experts_group.bread_systems_library.ffm.windows.models.handleLastError
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.BOOL
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.DWORD
@@ -72,7 +72,7 @@ object EventRing {
     fun addEvent(kernel32: Kernel32, kernelBase: KernelBase, event: HANDLE, callback: () -> Unit) {
         val eventSet = getEventSet(kernel32, kernelBase)
 
-        val handleCopy = Pointer<Void>(typeOf<Void>(), event.segment)
+        val handleCopy = Pointer<Void>(kernel32.linker, typeOf<Void>(), event.segment)
         val weak = WeakReference(event, orphanEventsQueue)
 
         if (eventSet.threadSets.isEmpty() || eventSet.threadSets.last().events.size == MAXIMUM_WAIT_OBJECTS - 1) {
@@ -109,7 +109,7 @@ object EventRing {
                 allocateSet()
                 while (true) {
                     val status = kernel32.WaitForMultipleObjectsEx!!(
-                        DWORD(count), Pointer(typeOf<HANDLE>(), handles),
+                        DWORD(count), Pointer(kernel32.linker, typeOf<HANDLE>(), handles),
                         BOOL(0), DWORD(-1), BOOL(0)
                     ).value as Int
                     when (status) {

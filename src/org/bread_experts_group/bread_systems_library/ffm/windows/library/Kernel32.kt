@@ -1,9 +1,10 @@
-package org.bread_experts_group.bread_systems_library.ffm.windows
+package org.bread_experts_group.bread_systems_library.ffm.windows.library
 
 import org.bread_experts_group.bread_systems_library.ffm.Critical
 import org.bread_experts_group.bread_systems_library.ffm.LibrarySource
 import org.bread_experts_group.bread_systems_library.ffm.c.types.Pointer
 import org.bread_experts_group.bread_systems_library.ffm.c.types.va_list
+import org.bread_experts_group.bread_systems_library.ffm.windows.PreserveLastError
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.*
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.ioringapi.HIORING
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.ntioring_x.IORING_OP_CODE
@@ -23,6 +24,7 @@ class Kernel32(
     val GetTickCount64: (() -> ULONGLONG)?,
     val GetCurrentProcessId: (() -> DWORD)?,
     val GetCurrentProcess: (() -> HANDLE)?,
+    val GetModuleHandleW: @PreserveLastError ((lpModuleName: LPCWSTR?) -> HMODULE)?,
     val WaitForSingleObject: ((hHandle: HANDLE?, dwMilliseconds: DWORD) -> DWORD)?,
     val WaitForMultipleObjectsEx: @PreserveLastError ((nCount: DWORD, lpHandles: Pointer<HANDLE>?, bWaitAll: BOOL, dwMilliseconds: DWORD, bAlertable: BOOL) -> DWORD)?,
 //    val HeapCreate: @PreserveLastError ((flOptions: DWORD, dwInitialSize: SIZE_T, dwMaximumSize: SIZE_T) -> HANDLE)?,

@@ -1,7 +1,8 @@
-package org.bread_experts_group.bread_systems_library.ffm.windows
+package org.bread_experts_group.bread_systems_library.ffm.windows.library
 
 import org.bread_experts_group.bread_systems_library.ffm.LibrarySource
 import org.bread_experts_group.bread_systems_library.ffm.c.types.Pointer
+import org.bread_experts_group.bread_systems_library.ffm.windows.PreserveLastError
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.HANDLE
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.PVOID
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.SIZE_T

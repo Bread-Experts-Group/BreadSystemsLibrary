@@ -17,6 +17,7 @@ import java.lang.invoke.MethodHandle
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.MethodType
 import java.lang.reflect.AccessFlag
+import java.lang.reflect.Constructor
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import kotlin.jvm.optionals.getOrNull
@@ -37,7 +38,7 @@ fun KType.memoryLayout(
 ): MemoryLayout = when (val clazz = this.classifier!! as KClass<*>) {
     Pointer::class, MemorySegment::class -> return if (unaligned) ValueLayout.ADDRESS_UNALIGNED else ValueLayout.ADDRESS
 
-    unsigned__int64::class, Long::class -> return if (unaligned) ValueLayout.JAVA_LONG_UNALIGNED else ValueLayout.JAVA_LONG
+    unsigned__int64::class, __int64::class, Long::class -> return if (unaligned) ValueLayout.JAVA_LONG_UNALIGNED else ValueLayout.JAVA_LONG
     long::class, unsigned_long::class -> linker.canonicalLayouts()["long"]!!
 
     Int::class -> return if (unaligned) ValueLayout.JAVA_INT_UNALIGNED else ValueLayout.JAVA_INT
@@ -51,7 +52,12 @@ fun KType.memoryLayout(
     Byte::class -> ValueLayout.JAVA_BYTE
     size_t::class, ssize_t::class -> linker.canonicalLayouts()["size_t"]!!
 
+    Float::class -> ValueLayout.JAVA_FLOAT
+    float::class -> linker.canonicalLayouts()["float"]!!
+
     else -> {
+        if (Function::class.isSuperclassOf(clazz)) return if (unaligned) ValueLayout.ADDRESS_UNALIGNED else ValueLayout.ADDRESS
+
         val companion = clazz.companionObjectInstance
         if (companion is TypeDynamicallySolved) return companion.solve().memoryLayout(linker, padEnd, unaligned)
 
@@ -70,14 +76,20 @@ fun Method.type(): MethodType = MethodType.methodType(
     this.parameterTypes
 )
 
-fun Method.handle(lookup: MethodHandles.Lookup): MethodHandle {
-    if (this.modifiers and Modifier.STATIC != 0) TODO("Static function call")
+fun Constructor<*>.type(): MethodType = MethodType.methodType(
+    Void.TYPE,
+    this.parameterTypes
+)
 
-    return lookup.findVirtual(
-        this.declaringClass,
-        this.name, this.type()
-    )
+fun Method.handle(lookup: MethodHandles.Lookup): MethodHandle {
+    if (this.modifiers and Modifier.STATIC != 0)
+        return lookup.findStatic(this.declaringClass, this.name, this.type())
+    return lookup.findVirtual(this.declaringClass, this.name, this.type())
 }
+
+fun Constructor<*>.handle(lookup: MethodHandles.Lookup): MethodHandle = lookup.findConstructor(
+    this.declaringClass, this.type()
+)
 
 fun KFunction<*>.handle(lookup: MethodHandles.Lookup): MethodHandle = this.javaMethod!!.handle(lookup)
 
@@ -86,13 +98,77 @@ fun KProperty<*>.handle(lookup: MethodHandles.Lookup): MethodHandle {
     TODO("Field")
 }
 
-object NativeMethodFilters {
-    fun fixSegment(
-        segment: MemorySegment, provider: KType
-    ): Any = Pointer<Any>(provider, segment)
+fun methodHandleNativeToJVM(
+    source: KFunction<*>,
+    lookup: MethodHandles.Lookup,
+    linker: Linker
+): MethodHandle = methodHandleNativeToJVM(
+    source.handle(lookup),
+    source.parameters.map { it.type },
+    source.returnType,
+    lookup, linker
+)
+
+fun methodHandleNativeToJVM(
+    handle: MethodHandle,
+    parameters: List<KType>,
+    returnType: KType,
+    lookup: MethodHandles.Lookup,
+    linker: Linker
+): MethodHandle {
+    var methodHandle = handle
+    parameters.forEachIndexed { index, parameter ->
+        methodHandle = MethodHandles.filterArguments(
+            methodHandle, index,
+            when (val clazz = parameter.classifier as KClass<*>) {
+                Pointer::class -> MethodHandles.insertArguments(
+                    Pointer::class.java.getConstructor(
+                        Linker::class.java,
+                        KType::class.java,
+                        MemorySegment::class.java
+                    ).handle(lookup),
+                    0,
+                    linker,
+                    parameter.arguments[0].type!!
+                )
+                else -> if (ValueProvider::class.isSuperclassOf(clazz)) when (
+                    val layout = parameter.memoryLayout(linker, false)
+                ) {
+                    ValueLayout.JAVA_INT -> clazz.java.getConstructor(Any::class.java).handle(lookup).asType(
+                        MethodType.methodType(clazz.java, Int::class.java)
+                    )
+
+                    ValueLayout.JAVA_LONG -> clazz.java.getConstructor(Any::class.java).handle(lookup).asType(
+                        MethodType.methodType(clazz.java, Long::class.java)
+                    )
+
+                    else -> throw NotImplementedError("$layout")
+                } else throw NotImplementedError("$parameter")
+            }
+        )
+    }
+    return if (returnType != Unit::class && returnType != Nothing::class) MethodHandles.filterReturnValue(
+        methodHandle,
+        when (val clazz = returnType.classifier as KClass<*>) {
+            else -> if (ValueProvider::class.isSuperclassOf(clazz)) when (
+                val layout = returnType.memoryLayout(linker, false)
+            ) {
+                ValueLayout.JAVA_INT -> ValueProvider::value.handle(lookup).asType(
+                    MethodType.methodType(Int::class.java, clazz.java)
+                )
+
+                ValueLayout.JAVA_LONG -> ValueProvider::value.handle(lookup).asType(
+                    MethodType.methodType(Long::class.java, clazz.java)
+                )
+
+                else -> throw NotImplementedError("$layout")
+            } else throw NotImplementedError("$returnType")
+        }
+    ) else methodHandle
 }
 
-private fun fixMethodHandle(
+fun methodHandleJVMToNative(
+    linker: Linker,
     lookup: MethodHandles.Lookup,
     methodHandle: MethodHandle,
     returnType: KType, parameters: List<KTypeProjection>
@@ -128,16 +204,22 @@ private fun fixMethodHandle(
     val fixedType = MethodType.methodType(returnClass.java, innerType)
     methodHandle = MethodHandles.filterReturnValue(
         methodHandle,
-        if (Pointer::class.isSuperclassOf(returnClass)) MethodHandles.insertArguments(
-                NativeMethodFilters::fixSegment.handle(lookup).bindTo(NativeMethodFilters),
-                1, returnType.arguments.first().type!!)
-            .asType(fixedType)
+        if (Pointer::class.isSuperclassOf(returnClass))
+            MethodHandles.insertArguments(
+                Pointer::class.java.getConstructor(
+                    Linker::class.java,
+                    KType::class.java,
+                    MemorySegment::class.java
+                ).handle(lookup),
+                0,
+                linker,
+                returnType.arguments.first().type!!
+            ).asType(fixedType)
         else if (ValueProvider::class.isSuperclassOf(returnClass))
             lookup.findConstructor(
                 returnClass.java,
                 MethodType.methodType(Void.TYPE, Any::class.java)
-            )
-            .asType(fixedType)
+            ).asType(fixedType)
         else throw NotImplementedError("$returnClass")
     )
     return methodHandle
@@ -261,7 +343,7 @@ fun get(
                     *options.toTypedArray()
                 )
                 if (ple) methodHandle = MethodHandles.insertArguments(methodHandle, 0, StateLayout.local.get())
-                methodHandle = fixMethodHandle(lookup, methodHandle, returnType, parameters)
+                methodHandle = methodHandleJVMToNative(linker, lookup, methodHandle, returnType, parameters)
 
                 arguments[parameter.index] = createKFBridge(lookup, parameterArguments.size - 1, true, methodHandle)
             } else {
@@ -274,7 +356,7 @@ fun get(
                     *options.toTypedArray()
                 )
                 if (ple) methodHandle = MethodHandles.insertArguments(methodHandle, 0, StateLayout.local.get())
-                methodHandle = fixMethodHandle(lookup, methodHandle, returnType, parameters)
+                methodHandle = methodHandleJVMToNative(linker, lookup, methodHandle, returnType, parameters)
                 arguments[parameter.index] = createKFBridge(lookup, parameterArguments.size - 1, false, methodHandle)
             }
         } else throw IllegalArgumentException("Unable to translate (unknown): $parameter")

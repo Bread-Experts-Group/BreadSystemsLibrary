@@ -5,11 +5,21 @@ import java.io.Reader
 import java.math.BigDecimal
 
 sealed interface JSONPrimitive
-value class JSONObject(val elements: Map<String, JSONPrimitive?>) : JSONPrimitive
-value class JSONArray(val elements: List<JSONPrimitive?>) : JSONPrimitive
-value class JSONNumber(val number: BigDecimal) : JSONPrimitive
-value class JSONBoolean(val value: Boolean) : JSONPrimitive
-value class JSONString(val value: String) : JSONPrimitive
+value class JSONObject(val elements: Map<String, JSONPrimitive?>) : JSONPrimitive {
+    override fun toString(): String = "{${elements.entries.joinToString(",") { (key, value) -> "\"$key\": $value" }}}"
+}
+value class JSONArray(val elements: List<JSONPrimitive?>) : JSONPrimitive {
+    override fun toString(): String = "[${elements.joinToString(",") { it.toString() }}]"
+}
+value class JSONNumber(val number: BigDecimal) : JSONPrimitive {
+    override fun toString(): String = number.toString()
+}
+value class JSONBoolean(val value: Boolean) : JSONPrimitive {
+    override fun toString(): String = value.toString()
+}
+value class JSONString(val value: String) : JSONPrimitive {
+    override fun toString(): String = "\"$value\""
+}
 
 fun jsonParse(input: Reader): JSONPrimitive? {
     var lastConsumed: Char? = null

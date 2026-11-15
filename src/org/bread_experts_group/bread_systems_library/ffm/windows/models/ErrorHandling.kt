@@ -3,7 +3,7 @@ package org.bread_experts_group.bread_systems_library.ffm.windows.models
 import org.bread_experts_group.bread_systems_library.ffm.StateLayout
 import org.bread_experts_group.bread_systems_library.ffm.StateLayout.LAST_ERROR
 import org.bread_experts_group.bread_systems_library.ffm.c.types.Pointer
-import org.bread_experts_group.bread_systems_library.ffm.windows.Kernel32
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.Kernel32
 import org.bread_experts_group.bread_systems_library.ffm.windows.models.exception.hResult
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.DWORD
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.HANDLE
@@ -42,7 +42,7 @@ fun getResult(kernel32: Kernel32, n: DWORD, cause: Throwable? = null): Throwable
     val segment = buffer.segment.get(ValueLayout.ADDRESS, 0).reinterpret((count + 1) * 2L)
     val message = segment.getString(0, Charsets.UTF_16LE)
     val new = kernel32.LocalFree!!(
-        HANDLE(typeOf<Void>(), segment)
+         HANDLE(kernel32.linker, typeOf<Void>(), segment)
     )
     if (new.segment != MemorySegment.NULL) throw IllegalStateException("Failed to free message")
     return hResult(n.value, message.trim()).initCause(cause)

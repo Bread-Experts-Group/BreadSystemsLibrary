@@ -1,4 +1,4 @@
-package org.bread_experts_group.bread_systems_library.generic
+package org.bread_experts_group.bread_systems_library.generic.io
 
 import org.bread_experts_group.bread_systems_library.ffm.Structure
 import org.bread_experts_group.bread_systems_library.ffm.util.layout.computeLayout
@@ -8,6 +8,7 @@ import java.lang.foreign.MemorySegment
 import java.lang.foreign.ValueLayout
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.channels.ReadableByteChannel
 import kotlin.math.min
 import kotlin.reflect.KType
 import kotlin.reflect.typeOf
@@ -118,11 +119,22 @@ open class FlushingOutput(
         offset += data.size
     }
 
+    fun writeData(data: ReadableByteChannel) {
+        if (offset > Int.MAX_VALUE) flush()
+        val buffer = buffer.asByteBuffer()
+        while (true) {
+            val read = data.read(buffer)
+            if (read == -1) break
+            offset = buffer.position().toLong()
+            flush()
+        }
+    }
+
     fun writeStructure(linker: Linker, type: KType, run: Any.() -> Unit) {
         val size = type.computeLayout(linker).byteSize()
         if (size > buffer.byteSize()) TODO("Lrg part push")
         if (size > (buffer.byteSize() - offset)) flush()
-        run(image(type, buffer.asSlice(offset)))
+        run(image(linker, type, buffer.asSlice(offset)))
         offset += size
     }
 

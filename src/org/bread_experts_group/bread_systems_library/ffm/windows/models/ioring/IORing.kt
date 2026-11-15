@@ -2,12 +2,13 @@ package org.bread_experts_group.bread_systems_library.ffm.windows.models.ioring
 
 import org.bread_experts_group.bread_systems_library.ffm.Structure
 import org.bread_experts_group.bread_systems_library.ffm.c.types.Pointer
+import org.bread_experts_group.bread_systems_library.ffm.c.types.indirectPointer
 import org.bread_experts_group.bread_systems_library.ffm.util.SingleElement
 import org.bread_experts_group.bread_systems_library.ffm.util.layout.Array
 import org.bread_experts_group.bread_systems_library.ffm.util.layout.NativeArray
-import org.bread_experts_group.bread_systems_library.ffm.windows.Kernel32
-import org.bread_experts_group.bread_systems_library.ffm.windows.KernelBase
 import org.bread_experts_group.bread_systems_library.ffm.windows.WindowsCleaningArena
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.Kernel32
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.KernelBase
 import org.bread_experts_group.bread_systems_library.ffm.windows.models.getResult
 import org.bread_experts_group.bread_systems_library.ffm.windows.models.handleResult
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.*
@@ -123,7 +124,7 @@ class IORing internal constructor(
             kernel32,
             kernel32.BuildIoRingRegisterFileHandles!!(
                 hIo,
-                UINT32(handles.size), Pointer(typeOf<Pointer<Nothing>>(), array),
+                UINT32(handles.size), Pointer(kernel32.linker, typeOf<Pointer<Nothing>>(), array),
                 UINT_PTR(taskCounter)
             )
         )
@@ -155,7 +156,7 @@ class IORing internal constructor(
             it.Buffer.IndexAndOffset.Offset = UINT32(offset)
         } else {
             it.Kind = IORING_REF_KIND(IORING_REF_RAW)
-            it.Buffer.Address = Pointer(typeOf<Void>(), buffer.asSlice(offset.toLong()))
+            it.Buffer.Address = Pointer(kernel32.linker, typeOf<Void>(), buffer.asSlice(offset.toLong()))
         }
     }
 
@@ -245,7 +246,7 @@ fun IORing(
             kernel32.QueryIoRingCapabilities(capabilities)
         )
         val flags = Structure<IORING_CREATE_FLAGS>(it)
-        val hIo = Pointer<HIORING>(it)
+        val hIo = indirectPointer<HIORING>(it)
         handleResult(
             kernel32,
             kernel32.CreateIoRing(

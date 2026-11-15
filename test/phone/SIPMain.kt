@@ -1,6 +1,6 @@
 package phone
 
-import org.bread_experts_group.bread_systems_library.generic.BlockingInput
+import org.bread_experts_group.bread_systems_library.generic.io.BlockingInput
 import java.io.EOFException
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer

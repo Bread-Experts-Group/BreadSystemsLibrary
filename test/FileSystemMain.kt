@@ -1,7 +1,7 @@
 import org.bread_experts_group.bread_systems_library.ffm.get
-import org.bread_experts_group.bread_systems_library.ffm.windows.Kernel32
-import org.bread_experts_group.bread_systems_library.ffm.windows.KernelBase
 import org.bread_experts_group.bread_systems_library.ffm.windows.WindowsCleaningArena
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.Kernel32
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.KernelBase
 import org.bread_experts_group.bread_systems_library.ffm.windows.models.CleanableHandle
 import org.bread_experts_group.bread_systems_library.ffm.windows.models.ioring.ThreadedIORing
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.DWORD
@@ -21,6 +21,7 @@ fun main() {
         k32,
         k32.CreateFileW!!(
             LPCWSTR(
+                linker,
                 typeOf<WCHARptr>(),
                 Arena.global().allocateFrom("src/test/FileSystemMain.kt", Charsets.UTF_16LE)
             ), DWORD(0x80000000.toInt()), DWORD(0),

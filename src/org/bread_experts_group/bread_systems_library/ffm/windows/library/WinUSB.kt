@@ -1,6 +1,7 @@
-package org.bread_experts_group.bread_systems_library.ffm.windows
+package org.bread_experts_group.bread_systems_library.ffm.windows.library
 
 import org.bread_experts_group.bread_systems_library.ffm.LibrarySource
+import org.bread_experts_group.bread_systems_library.ffm.windows.PreserveLastError
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.*
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.winusb.PWINUSB_INTERFACE_HANDLE
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.winusb.WINUSB_INTERFACE_HANDLE

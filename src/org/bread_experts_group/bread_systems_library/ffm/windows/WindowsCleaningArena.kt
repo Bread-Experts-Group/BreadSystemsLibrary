@@ -1,6 +1,8 @@
 package org.bread_experts_group.bread_systems_library.ffm.windows
 
 import org.bread_experts_group.bread_systems_library.ffm.c.types.Pointer
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.Kernel32
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.KernelBase
 import org.bread_experts_group.bread_systems_library.ffm.windows.models.handleLastError
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.DWORD
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.DWORD64

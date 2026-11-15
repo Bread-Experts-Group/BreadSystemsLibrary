@@ -13,8 +13,8 @@ import org.bread_experts_group.bread_systems_library.ffm.linux.types.structs.net
 import org.bread_experts_group.bread_systems_library.ffm.linux.types.structs.pollfd
 import org.bread_experts_group.bread_systems_library.ffm.util.layout.NativeArray
 import org.bread_experts_group.bread_systems_library.ffm.util.layout.computeLayout
-import org.bread_experts_group.bread_systems_library.generic.BlockingInput
-import org.bread_experts_group.bread_systems_library.generic.FlushingOutput
+import org.bread_experts_group.bread_systems_library.generic.io.BlockingInput
+import org.bread_experts_group.bread_systems_library.generic.io.FlushingOutput
 import java.lang.foreign.*
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -32,7 +32,7 @@ class GenericNetLink(private val libc: libc) {
     private val output = FlushingOutput(Arena.global().allocate(16384)) { buffer, offset ->
         libc.send!!(
             socket,
-            Pointer(typeOf<Void>(), buffer), size_t(offset),
+            Pointer(libc.linker, typeOf<Void>(), buffer), size_t(offset),
             int(0)
         )
     }
@@ -144,7 +144,7 @@ class GenericNetLink(private val libc: libc) {
                 if (s.value == -1) TODO("ERR")
                 val rx = libc.recv!!(
                     socket,
-                    Pointer(typeOf<Void>(), recv), size_t(recv.byteSize()),
+                    Pointer(libc.linker, typeOf<Void>(), recv), size_t(recv.byteSize()),
                     int(0)
                 )
                 decoder.load(recv.reinterpret(rx.value as Long).toArray(ValueLayout.JAVA_BYTE))

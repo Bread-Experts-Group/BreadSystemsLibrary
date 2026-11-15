@@ -1,7 +1,7 @@
 package org.bread_experts_group.bread_systems_library.ffm.windows.models.ioring
 
-import org.bread_experts_group.bread_systems_library.ffm.windows.Kernel32
-import org.bread_experts_group.bread_systems_library.ffm.windows.KernelBase
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.Kernel32
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.KernelBase
 import org.bread_experts_group.bread_systems_library.ffm.windows.models.event.EventRing
 import org.bread_experts_group.bread_systems_library.ffm.windows.models.exception.HRESULTException
 import org.bread_experts_group.bread_systems_library.ffm.windows.models.exception.status.FACILITY_NT_IORING

@@ -1,15 +1,18 @@
-package org.bread_experts_group.bread_systems_library.generic
+package org.bread_experts_group.bread_systems_library.generic.io
 
 import org.bread_experts_group.bread_systems_library.ffm.Structure
 import org.bread_experts_group.bread_systems_library.ffm.util.layout.computeLayout
 import org.bread_experts_group.bread_systems_library.ffm.util.layout.image
+import java.io.EOFException
 import java.lang.foreign.Linker
 import java.lang.foreign.MemorySegment
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.CharBuffer
+import java.nio.channels.ReadableByteChannel
 import java.nio.charset.CharsetDecoder
 import java.nio.charset.CoderResult
+import java.util.concurrent.Executor
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
@@ -135,6 +138,7 @@ class BlockingInput {
 
     fun readStructure(type: KType, linker: Linker): Any = lock.read {
         return image(
+            linker,
             type,
             MemorySegment.ofArray(
                 readBytes(type.computeLayout(linker).byteSize().toInt())
@@ -168,4 +172,23 @@ class BlockingInput {
         this.data.addLast(ByteBuffer.wrap(data).order(ByteOrder.nativeOrder()))
         rCondition.signalAll()
     }
+}
+
+fun BlockingInput.associateChannel(
+    channel: ReadableByteChannel,
+    bufferSize: Int,
+    executor: Executor? = null
+) {
+    val data = ByteBuffer.allocateDirect(bufferSize)
+    val runnable = { _: Int ->
+        val read = channel.read(data.clear())
+        if (read == -1) throw EOFException()
+        val array = ByteArray(read)
+        data.flip().get(array)
+        this.load(array)
+    }
+
+    this.suspensionNotification = if (executor != null) {
+        { r: Int -> executor.execute { runnable(r) } }
+    } else runnable
 }

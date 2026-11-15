@@ -1,10 +1,11 @@
 import org.bread_experts_group.bread_systems_library.ffm.Structure
 import org.bread_experts_group.bread_systems_library.ffm.c.types.Pointer
+import org.bread_experts_group.bread_systems_library.ffm.c.types.indirectPointer
 import org.bread_experts_group.bread_systems_library.ffm.get
-import org.bread_experts_group.bread_systems_library.ffm.windows.Kernel32
-import org.bread_experts_group.bread_systems_library.ffm.windows.KernelBase
-import org.bread_experts_group.bread_systems_library.ffm.windows.WinUSB
 import org.bread_experts_group.bread_systems_library.ffm.windows.WindowsCleaningArena
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.Kernel32
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.KernelBase
+import org.bread_experts_group.bread_systems_library.ffm.windows.library.WinUSB
 import org.bread_experts_group.bread_systems_library.ffm.windows.models.handleLastError
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.*
 import org.bread_experts_group.bread_systems_library.ffm.windows.types.defs.fileapi.GENERIC_READ
@@ -28,10 +29,11 @@ fun main() {
     val usb = get<WinUSB>(SymbolLookup.libraryLookup("Winusb.dll", Arena.ofAuto()), linker)
 
     val arena = WindowsCleaningArena(k32, kBase)
-    val device = Pointer<WINUSB_INTERFACE_HANDLE>(arena)
+    val device = indirectPointer<WINUSB_INTERFACE_HANDLE>(arena)
 
     val handle = k32.CreateFileW!!(
         LPCWSTR(
+            linker,
             typeOf<WCHARptr>(),
             Arena.global().allocateFrom("\\\\?\\USB#VID_0BDA&PID_2838&MI_00#8&38a180a5&0&0000#{a819feb4-fd91-41de-befe-f34a3603b628}", Charsets.UTF_16LE)
         ), DWORD(GENERIC_READ or GENERIC_WRITE), DWORD(0),
@@ -74,12 +76,12 @@ fun main() {
     setup.Length = USHORT(1.toShort())
 
     val buffer = arena.allocate(1)
-    val ptr = Pointer<ULONG>(typeOf<ULONG>(), arena.allocate(4))
+    val ptr = Pointer<ULONG>(linker,typeOf<ULONG>(), arena.allocate(4))
     // Value = (BaseAdd)<<8 + OffsetAdd
     // Length = register length
     status = usb.WinUsb_ControlTransfer!!(
         device.value, setup,
-        Pointer(typeOf<UCHAR>(), buffer), ULONG(1), ptr,
+        Pointer(linker, typeOf<UCHAR>(), buffer), ULONG(1), ptr,
         null
     )
     if (status.value == 0) handleLastError(k32)

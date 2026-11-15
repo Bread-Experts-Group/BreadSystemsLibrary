@@ -1,7 +1,7 @@
 package org.bread_experts_group.bread_systems_library.model.codings
 
-import org.bread_experts_group.bread_systems_library.generic.BlockingInput
-import org.bread_experts_group.bread_systems_library.generic.FlushingOutput
+import org.bread_experts_group.bread_systems_library.generic.io.BlockingInput
+import org.bread_experts_group.bread_systems_library.generic.io.FlushingOutput
 import java.lang.constant.ClassDesc
 import java.math.BigDecimal
 import java.math.BigInteger

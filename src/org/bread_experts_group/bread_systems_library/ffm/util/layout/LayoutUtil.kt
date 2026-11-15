@@ -4,17 +4,21 @@ import org.bread_experts_group.bread_systems_library.ffm.Structure
 import org.bread_experts_group.bread_systems_library.ffm.Union
 import org.bread_experts_group.bread_systems_library.ffm.c.types.Pointer
 import org.bread_experts_group.bread_systems_library.ffm.memoryLayout
+import org.bread_experts_group.bread_systems_library.ffm.methodHandleNativeToJVM
+import org.bread_experts_group.bread_systems_library.ffm.util.ArrayElement
+import org.bread_experts_group.bread_systems_library.ffm.windows.models.com.IUnknown
+import org.bread_experts_group.bread_systems_library.ffm.windows.models.com.interpretCOM
+import org.bread_experts_group.bread_systems_library.generic.ArraySize
 import org.bread_experts_group.bread_systems_library.generic.Order
 import org.bread_experts_group.bread_systems_library.generic.ValueProvider
 import java.lang.foreign.*
 import java.lang.foreign.MemoryLayout.PathElement.groupElement
+import java.lang.invoke.MethodHandle
+import java.lang.invoke.MethodHandles
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
 import kotlin.reflect.*
-import kotlin.reflect.full.findAnnotation
-import kotlin.reflect.full.isSuperclassOf
-import kotlin.reflect.full.memberProperties
-import kotlin.reflect.full.primaryConstructor
+import kotlin.reflect.full.*
 import kotlin.reflect.jvm.javaGetter
 import kotlin.reflect.jvm.javaMethod
 import kotlin.reflect.jvm.javaSetter
@@ -56,6 +60,11 @@ fun KType.computeLayout(
     unaligned: Boolean = false
 ): MemoryLayout {
     val clazz = this.classifier!! as KClass<*>
+    if (clazz == ArrayElement::class) return MemoryLayout.sequenceLayout(
+        this.findAnnotation<ArraySize>()!!.size,
+        this.arguments[0].type!!.memoryLayout(linker, padEnd, unaligned)
+    )
+
     val layouts = mutableListOf<MemoryLayout>()
     clazz.memberProperties.sortedBy { it.findAnnotation<Order>()!!.order }.forEach {
         layouts.add(
@@ -99,20 +108,24 @@ fun KType.computeLayout(
 
 private val imageCache = mutableMapOf<LayoutConfiguration, (MemorySegment) -> Any>()
 
-private fun imageDry(encoded: KType, unaligned: Boolean = false): (MemorySegment) -> Any {
+private fun imageDry(linker: Linker, encoded: KType, unaligned: Boolean = false): (MemorySegment) -> Any {
     val encodedClass = encoded.classifier as KClass<*>
     if (encodedClass == Nothing::class) throw UnsupportedOperationException("Opaque pointer")
     if (Structure::class.isSuperclassOf(encodedClass)) {
-        val layout = encoded.computeLayout(Linker.nativeLinker(), unaligned = unaligned)
+        val layout = encoded.computeLayout(linker, unaligned = unaligned)
 
         val methods = mutableMapOf<Method, ImageMethodKind>()
         encodedClass.memberProperties.forEach {
             val resolvedType = resolveType(it.returnType, encoded)
             if (Structure::class.isSuperclassOf(resolvedType.classifier!! as KClass<*>)) {
                 val handle = layout.sliceHandle(groupElement(it.name))
-                if (it is KMutableProperty<*>) TODO("Alpha")
+                if (it is KMutableProperty<*>) methods[it.javaSetter!!] = ImageMethodKind.Setter { structureSegment, a: Any ->
+                    a as Structure
+                    throw NotImplementedError("Structure copy ${a.segment()} -> $structureSegment")
+                }
                 methods[it.javaGetter!!] = ImageMethodKind.Struct { structureSegment ->
                     image(
+                        linker,
                         resolvedType,
                         handle(structureSegment, 0L) as MemorySegment
                     )
@@ -121,7 +134,7 @@ private fun imageDry(encoded: KType, unaligned: Boolean = false): (MemorySegment
                 val handle = layout.varHandle(groupElement(it.name))
                 val clazz = resolvedType.classifier as KClass<*>
                 if (it is KMutableProperty<*>) {
-                    val handler = when (val layout = resolvedType.memoryLayout(Linker.nativeLinker())) {
+                    val handler = when (val layout = resolvedType.memoryLayout(linker)) {
                         ValueLayout.JAVA_BYTE -> if (clazz == Byte::class) { structureSegment: MemorySegment, a: Any ->
                             handle.set(structureSegment, 0L, a)
                         } else { structureSegment: MemorySegment, a: Any ->
@@ -146,8 +159,27 @@ private fun imageDry(encoded: KType, unaligned: Boolean = false): (MemorySegment
                             handle.set(structureSegment, 0L, (a as ValueProvider).value as Long)
                         }
 
-                        ValueLayout.ADDRESS -> { structureSegment: MemorySegment, a: Any ->
+                        ValueLayout.JAVA_FLOAT -> if (clazz == Float::class) { structureSegment: MemorySegment, a: Any ->
+                            handle.set(structureSegment, 0L, a)
+                        } else { structureSegment: MemorySegment, a: Any ->
+                            handle.set(structureSegment, 0L, (a as ValueProvider).value as Float)
+                        }
+
+                        ValueLayout.ADDRESS -> if (clazz == Pointer::class) { structureSegment: MemorySegment, a: Any ->
                             handle.set(structureSegment, 0L, (a as Pointer<*>).segment)
+                        } else { structureSegment: MemorySegment, function: Any ->
+                            function as KFunction<*>
+                            val upcall = linker.upcallStub(
+                                methodHandleNativeToJVM(function, MethodHandles.lookup(), linker),
+                                FunctionDescriptor.of(
+                                    function.returnType.memoryLayout(linker, false),
+                                    *function.parameters.map { parameter ->
+                                        parameter.type.memoryLayout(linker, false)
+                                    }.toTypedArray()
+                                ),
+                                Arena.global()
+                            )
+                            handle.set(structureSegment, 0L, upcall)
                         }
 
                         else -> throw NotImplementedError("$layout")
@@ -175,7 +207,12 @@ private fun imageDry(encoded: KType, unaligned: Boolean = false): (MemorySegment
                 arrayOf(encodedClass.java)
             ) { proxy, method, args ->
                 when (method) {
-                    Object::toString.javaMethod!! -> return@newProxyInstance "$it -> ${encodedClass.simpleName}(${encodedClass.memberProperties
+                    Object::toString.javaMethod!! -> return@newProxyInstance if (proxy is ArrayElement<*>) {
+                        val size = encoded.findAnnotation<ArraySize>()!!.size
+                        var constructed = "$it -> ($size)["
+                        for (i in 0..<size) constructed += (if (i > 0) ", ${proxy[i]}" else proxy[i])
+                        "$constructed]"
+                    } else "$it -> ${encodedClass.simpleName}(${encodedClass.memberProperties
                         .sortedBy { prop -> prop.findAnnotation<Order>()!!.order }
                         .joinToString { prop ->
                             "${prop.name}: ${(prop as KProperty1<Any, Any>).get(proxy)}"
@@ -194,6 +231,58 @@ private fun imageDry(encoded: KType, unaligned: Boolean = false): (MemorySegment
                     }
 
                     Structure::segment.javaMethod!! -> return@newProxyInstance it
+                    Structure::setUpcall.javaMethod!! -> {
+                        val property = args[0] as KProperty<*>
+                        val upcallHandle = args[1] as MethodHandle
+//                        if (property !in encodedClass.memberProperties) throw IllegalArgumentException(
+//                            "$encoded does not contain $property"
+//                        )
+                        val parameters = property.returnType.arguments.dropLast(1).map { p -> p.type!! }
+                        val returnType = property.returnType.arguments.last().type!!
+
+                        val upcall = linker.upcallStub(
+                            methodHandleNativeToJVM(
+                                upcallHandle,
+                                parameters,
+                                returnType,
+                                MethodHandles.lookup(), linker
+                            ),
+                            FunctionDescriptor.of(
+                                returnType.memoryLayout(linker, false),
+                                *parameters.map { p -> p.memoryLayout(linker, false) }.toTypedArray()
+                            ),
+                            Arena.global()
+                        )
+                        layout.varHandle(groupElement(property.name)).set(it, 0L, upcall)
+                        return@newProxyInstance null
+                    }
+
+                    ArrayElement<*>::get.javaMethod!! -> {
+                        val elementType = encoded.arguments[0].type!!
+                        val layout = elementType.memoryLayout(linker, unaligned = unaligned)
+                        return@newProxyInstance image(
+                            linker,
+                            elementType,
+                            it.asSlice(layout.byteSize() * args[0] as Long, layout)
+                        )
+                    }
+
+                    ArrayElement<*>::set.javaMethod!! -> {
+                        val elementType = encoded.arguments[0].type!!
+                        if (
+                            (elementType.classifier!! as KClass<*>).isSubclassOf(ValueProvider::class)
+                        ) {
+                            val value = (args[1] as ValueProvider).value
+                            when (val layout = elementType.memoryLayout(linker, unaligned = unaligned)) {
+                                ValueLayout.JAVA_BYTE -> it.setAtIndex(
+                                    ValueLayout.JAVA_BYTE, args[0] as Long, value as Byte
+                                )
+
+                                else -> throw NotImplementedError("$layout")
+                            }
+                        } else throw NotImplementedError("$elementType")
+                        return@newProxyInstance null
+                    }
                 }
 
                 when (val method = methods[method]!!) {
@@ -214,19 +303,34 @@ private fun imageDry(encoded: KType, unaligned: Boolean = false): (MemorySegment
 
     @Suppress("UNCHECKED_CAST")
     if (encodedClass == Pointer::class) return { structureSegment ->
-        Pointer<Any>(structureSegment.get(ValueLayout.ADDRESS, 0))
+        Pointer<Any>(linker, encoded.arguments[0].type!!, structureSegment.get(ValueLayout.ADDRESS, 0))
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    if (encodedClass.isSubclassOf(ValueProvider::class)) {
+        val layout = encoded.memoryLayout(linker, unaligned = unaligned)
+        val constructor = encodedClass.primaryConstructor!!
+        return when (layout) {
+            ValueLayout.JAVA_BYTE -> { structureSegment -> constructor.call(structureSegment.get(ValueLayout.JAVA_BYTE, 0)) }
+
+            else -> throw NotImplementedError("$layout")
+        }
+    }
+
+    if (encodedClass.isSubclassOf(IUnknown::class)) return { segment ->
+        interpretCOM(linker, encoded, segment[ValueLayout.ADDRESS, 0].reinterpret(ValueLayout.ADDRESS.byteSize()))
     }
 
     throw NotImplementedError("$encoded")
 }
 
-fun image(encoded: KType, segment: MemorySegment, unaligned: Boolean = false): Any = imageCache.getOrPut(
-    LayoutConfiguration(unaligned, @OptIn(ExperimentalStdlibApi::class) encoded.javaType)
+fun image(linker: Linker, encoded: KType, segment: MemorySegment, unaligned: Boolean = false): Any = imageCache.getOrPut(
+    LayoutConfiguration(linker, unaligned, @OptIn(ExperimentalStdlibApi::class) encoded.javaType)
 ) {
-    imageDry(encoded, unaligned)
+    imageDry(linker, encoded, unaligned)
 }(segment)
 
-inline fun <reified T : Any> image(segment: MemorySegment): T = image(typeOf<T>(), segment) as T
+inline fun <reified T : Any> image(linker: Linker, segment: MemorySegment): T = image(linker, typeOf<T>(), segment) as T
 
 fun Array(
     type: KType, arrayType: KType,
@@ -241,7 +345,7 @@ fun Array(
     for (i in 0..<count) {
         java.lang.reflect.Array.set(
             array, i,
-            initializer(i, image(type, segment.asSlice(i * layout.byteSize())))
+            initializer(i, image(linker, type, segment.asSlice(i * layout.byteSize())))
         )
     }
 
@@ -258,7 +362,7 @@ fun NativeArray(
     val layout = type.computeLayout(linker, true)
     val segment = arena.allocate(layout, count.toLong())
     for (i in 0..<count) {
-        operation(i, image(type, segment.asSlice(i * layout.byteSize())))
+        operation(i, image(linker, type, segment.asSlice(i * layout.byteSize())))
     }
     @Suppress("UNCHECKED_CAST")
     return segment
